@@ -23,6 +23,10 @@ export function redactSensitiveData(text: string): string {
     redacted = redacted.replace(/gsk_[a-zA-Z0-9]{30,}/g, 'gsk_***REDACTED***');
     // Redact Gemini API Keys (AIza...)
     redacted = redacted.replace(/AIza[0-9A-Za-z-_]{35}/g, 'AIza***REDACTED***');
+    // Redact Anthropic API Keys (sk-ant-...)
+    redacted = redacted.replace(/sk-ant-[a-zA-Z0-9_-]{50,}/g, 'sk-ant-***REDACTED***');
+    // Redact OpenAI API Keys (sk-...)
+    redacted = redacted.replace(/sk-[a-zA-Z0-9]{40,}/g, 'sk-***REDACTED***');
     // Redact Bearer tokens
     redacted = redacted.replace(/Bearer\s+[a-zA-Z0-9\-\._~\+\/]+/gi, 'Bearer ***REDACTED***');
     // General x-api-key Redaction

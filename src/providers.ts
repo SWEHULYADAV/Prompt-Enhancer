@@ -27,7 +27,7 @@ export class AnthropicProvider implements LlmProvider {
         if (!apiKey) {throw new Error("Anthropic API key not configured.");}
 
         const body: any = {
-            model: this.config.model || 'claude-3-opus-20240229',
+            model: this.config.model || 'claude-3-5-sonnet-20240620',
             // eslint-disable-next-line @typescript-eslint/naming-convention
             max_tokens: maxTokens,
             temperature: temperature,
@@ -96,10 +96,62 @@ export class AnthropicProvider implements LlmProvider {
         return await this.makeRequest(request.system, request.prompt, 4000, 0.2, context);
     }
 
+    async generateTextStream(request: LlmTextRequest, context: vscode.ExtensionContext, onToken: (token: string) => void): Promise<string> {
+        const apiKey = await ProviderConfigManager.getApiKey(context, this.config.id);
+        if (!apiKey) {throw new Error("Anthropic API key not configured.");}
+
+        const body: any = {
+            model: this.config.model || 'claude-3-5-sonnet-20240620',
+            max_tokens: 4000,
+            temperature: 0.2,
+            messages: [{ role: 'user', content: request.prompt }],
+            stream: true
+        };
+        if (request.system) { body.system = request.system; }
+
+        return new Promise((resolve, reject) => {
+            let fullText = '';
+            const req = https.request('https://api.anthropic.com/v1/messages', {
+                method: 'POST',
+                headers: {
+                    'x-api-key': apiKey,
+                    'anthropic-version': '2023-06-01',
+                    'content-type': 'application/json'
+                },
+                timeout: 30000
+            }, res => {
+                let buffer = '';
+                res.on('data', chunk => {
+                    buffer += chunk.toString();
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.substring(6).trim();
+                            if (data === '[DONE]') {continue;}
+                            try {
+                                const parsed = JSON.parse(data);
+                                if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
+                                    const token = parsed.delta.text;
+                                    fullText += token;
+                                    onToken(token);
+                                }
+                            } catch (e) {}
+                        }
+                    }
+                });
+                res.on('end', () => resolve(fullText));
+            });
+            req.on('error', err => reject(err));
+            req.write(JSON.stringify(body));
+            req.end();
+        });
+    }
+
     async healthCheck(context: vscode.ExtensionContext): Promise<HealthCheckResult> {
         try {
             const content = await this.makeRequest(undefined, "Reply with OK only.", 8, 0, context);
-            if (content && content.includes('OK')) {
+            if (content && content.toUpperCase().includes('OK')) {
                 return { status: 'working', message: 'API is working.' };
             }
             return { status: 'unexpected_response', message: `API reachable but unexpected response: ${content}` };
@@ -134,8 +186,8 @@ export class GeminiProvider implements LlmProvider {
         const apiKey = await ProviderConfigManager.getApiKey(context, this.config.id);
         if (!apiKey) {throw new Error("Gemini API key not configured.");}
 
-        const model = this.config.model || 'gemini-1.5-pro';
-        const urlStr = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const model = this.config.model || 'gemini-1.5-flash';
+        const urlStr = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
         const body: any = {
             contents: [{ parts: [{ text: user }] }],
@@ -158,7 +210,10 @@ export class GeminiProvider implements LlmProvider {
             const url = new URL(urlStr);
             const req = https.request(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'x-goog-api-key': apiKey 
+                },
                 timeout: 30000
             }, res => {
                 let data = '';
@@ -204,10 +259,77 @@ export class GeminiProvider implements LlmProvider {
         return await this.makeRequest(request.system, request.prompt, 4000, 0.2, context);
     }
 
+    async generateTextStream(request: LlmTextRequest, context: vscode.ExtensionContext, onToken: (token: string) => void): Promise<string> {
+        const apiKey = await ProviderConfigManager.getApiKey(context, this.config.id);
+        if (!apiKey) {throw new Error("Gemini API key not configured.");}
+
+        const model = this.config.model || 'gemini-1.5-flash';
+        const urlStr = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent`;
+
+        const body: any = {
+            contents: [{ parts: [{ text: request.prompt }] }],
+            generationConfig: {
+                temperature: 0.2,
+                maxOutputTokens: 4000
+            }
+        };
+        if (request.system) { body.systemInstruction = { parts: [{ text: request.system }] }; }
+
+        return new Promise((resolve, reject) => {
+            let fullText = '';
+            const url = new URL(urlStr);
+            const req = https.request(url, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'x-goog-api-key': apiKey 
+                },
+                timeout: 30000
+            }, res => {
+                let buffer = '';
+                res.on('data', chunk => {
+                    buffer += chunk.toString();
+                    let searchPos = 0;
+                    while (true) {
+                        const startIdx = buffer.indexOf('{"candidates"', searchPos);
+                        if (startIdx === -1) break;
+                        
+                        let endIdx = buffer.indexOf('}\n', startIdx);
+                        if (endIdx === -1) endIdx = buffer.indexOf('},', startIdx);
+                        if (endIdx === -1) endIdx = buffer.lastIndexOf('}');
+                        
+                        if (endIdx > startIdx) {
+                            try {
+                                const jsonStr = buffer.substring(startIdx, endIdx + 1);
+                                const parsed = JSON.parse(jsonStr);
+                                if (parsed.candidates && parsed.candidates[0].content.parts[0].text) {
+                                    const token = parsed.candidates[0].content.parts[0].text;
+                                    fullText += token;
+                                    onToken(token);
+                                }
+                                buffer = buffer.substring(endIdx + 1);
+                                searchPos = 0;
+                            } catch (e) {
+                                searchPos = startIdx + 1;
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                });
+                res.on('end', () => resolve(fullText));
+            });
+            req.on('error', err => reject(err));
+            req.write(JSON.stringify(body));
+            req.end();
+        });
+    }
+
     async healthCheck(context: vscode.ExtensionContext): Promise<HealthCheckResult> {
         try {
             const content = await this.makeRequest(undefined, "Reply with OK only.", 8, 0, context);
-            if (content && content.includes('OK')) {
+            if (content && content.toUpperCase().includes('OK')) {
                 return { status: 'working', message: 'API is working.' };
             }
             return { status: 'unexpected_response', message: `API reachable but unexpected response: ${content}` };
@@ -348,7 +470,7 @@ export class GenericHttpProvider implements LlmProvider {
     async healthCheck(context: vscode.ExtensionContext): Promise<HealthCheckResult> {
         try {
             const content = await this.makeRequest(undefined, "Reply with OK only.", 8, 0, context);
-            if (content && content.includes('OK')) {
+            if (content && content.toUpperCase().includes('OK')) {
                 return { status: 'working', message: 'API is working.' };
             }
             return { status: 'unexpected_response', message: `API reachable but unexpected response: ${content}` };
@@ -484,6 +606,59 @@ export class CustomOpenAiProvider implements LlmProvider {
         return content;
     }
 
+    async generateTextStream(request: LlmTextRequest, context: vscode.ExtensionContext, onToken: (token: string) => void): Promise<string> {
+        const headers = await this.getHeaders(context);
+        const urlStr = `${this.config.baseUrl}${this.config.endpointPath || '/chat/completions'}`;
+        
+        const messages = [];
+        if (request.system) {
+            messages.push({ role: 'system', content: request.system });
+        }
+        messages.push({ role: 'user', content: request.prompt });
+
+        const body = {
+            model: this.config.model,
+            messages,
+            temperature: 0.2,
+            stream: true
+        };
+
+        return new Promise((resolve, reject) => {
+            let fullText = '';
+            const url = new URL(urlStr);
+            const req = https.request(url, {
+                method: 'POST',
+                headers,
+                timeout: 30000
+            }, res => {
+                let buffer = '';
+                res.on('data', chunk => {
+                    buffer += chunk.toString();
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.substring(6).trim();
+                            if (data === '[DONE]') {continue;}
+                            try {
+                                const parsed = JSON.parse(data);
+                                const token = parsed.choices?.[0]?.delta?.content || "";
+                                if (token) {
+                                    fullText += token;
+                                    onToken(token);
+                                }
+                            } catch (e) {}
+                        }
+                    }
+                });
+                res.on('end', () => resolve(fullText));
+            });
+            req.on('error', err => reject(err));
+            req.write(JSON.stringify(body));
+            req.end();
+        });
+    }
+
     async healthCheck(context: vscode.ExtensionContext): Promise<HealthCheckResult> {
         try {
             const headers = await this.getHeaders(context);
@@ -500,7 +675,7 @@ export class CustomOpenAiProvider implements LlmProvider {
             const response: any = await this.makeRequest(url, headers, body, 20000);
             const content = response.choices?.[0]?.message?.content;
             
-            if (content && content.includes('OK')) {
+            if (content && content.toUpperCase().includes('OK')) {
                 return { status: 'working', message: 'API is working.' };
             }
             return { status: 'unexpected_response', message: `API reachable but unexpected response: ${content}` };

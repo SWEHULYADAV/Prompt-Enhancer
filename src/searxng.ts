@@ -8,6 +8,25 @@ export class SearxngClient {
 
     constructor() {
         this.baseUrl = vscode.workspace.getConfiguration('contextforge').get<string>('searxng.baseUrl') || 'http://localhost:8080';
+        this.validateUrl();
+    }
+
+    private validateUrl() {
+        try {
+            const u = new URL(this.baseUrl);
+            const host = u.hostname;
+            // Prevent basic SSRF to AWS metadata or common private subnets (except localhost)
+            if (host === '169.254.169.254' || host.startsWith('10.') || 
+                host.startsWith('192.168.') || host.startsWith('172.16.') || 
+                host.startsWith('172.31.')) {
+                // We allow localhost/127.0.0.1 as SearXNG is often run locally
+                throw new Error("Invalid SearXNG URL: Internal network addresses are not allowed for security reasons.");
+            }
+        } catch (e: any) {
+            if (e.message.includes('Invalid SearXNG URL')) {
+                throw e;
+            }
+        }
     }
 
     public async search(query: string, maxRetries = 2): Promise<SearchResult[]> {

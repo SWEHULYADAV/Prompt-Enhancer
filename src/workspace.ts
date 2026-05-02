@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 
 export class WorkspaceIndexer {
     private importantFiles = [
@@ -38,7 +38,7 @@ export class WorkspaceIndexer {
 
         summary += "\nDirectory Structure (Top Level):\n";
         try {
-            const uris = await vscode.workspace.findFiles('**/*', undefined, 100);
+            const uris = await vscode.workspace.findFiles('**/*', '{**/node_modules/**,**/.git/**,**/out/**,**/dist/**}', 100);
             const dirs = new Set<string>();
             for (const uri of uris) {
                 const relative = path.relative(rootPath, uri.fsPath);
@@ -61,31 +61,59 @@ export class WorkspaceIndexer {
             return '';
         }
         const rootPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
-        const opts = { cwd: rootPath, timeout: 5000 };
+        const opts: any = { cwd: rootPath, timeout: 5000, encoding: 'utf8' };
 
         try {
             // Verify it's a git repo
-            execSync('git rev-parse --git-dir', opts);
+            const res = spawnSync('git', ['rev-parse', '--git-dir'], opts);
+            if (res.error || res.status !== 0) return '';
         } catch {
             return ''; // Not a git repo — silently skip
         }
 
         let context = '';
         try {
-            const log = execSync('git log --oneline -5', opts).toString().trim();
-            if (log) { context += `Recent Commits (last 5):\n${log}\n\n`; }
+            const logRes = spawnSync('git', ['log', '--oneline', '-5'], opts);
+            if (!logRes.error && logRes.status === 0) {
+                const log = logRes.stdout.trim();
+                if (log) { context += `Recent Commits (last 5):\n${log}\n\n`; }
+            }
         } catch { /* ignore */ }
 
         try {
-            const diffStat = execSync('git diff HEAD --stat', opts).toString().trim();
-            if (diffStat) { context += `Uncommitted Changes (stat):\n${diffStat}\n\n`; }
+            const diffStatRes = spawnSync('git', ['diff', 'HEAD', '--stat'], opts);
+            if (!diffStatRes.error && diffStatRes.status === 0) {
+                const diffStat = diffStatRes.stdout.trim();
+                if (diffStat) { context += `Uncommitted Changes (stat):\n${diffStat}\n\n`; }
+            }
         } catch { /* ignore */ }
 
         try {
-            const staged = execSync('git diff --cached --stat', opts).toString().trim();
-            if (staged) { context += `Staged Changes:\n${staged}\n`; }
+            const stagedRes = spawnSync('git', ['diff', '--cached', '--stat'], opts);
+            if (!stagedRes.error && stagedRes.status === 0) {
+                const staged = stagedRes.stdout.trim();
+                if (staged) { context += `Staged Changes:\n${staged}\n`; }
+            }
         } catch { /* ignore */ }
 
         return context;
+    }
+
+    /**
+     * Reads `.contextforge/rules.md` from the workspace root.
+     * Returns rules content as a string, or empty string if file doesn't exist.
+     */
+    public getProjectRules(): string {
+        if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+            return '';
+        }
+        const rootPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
+        const rulesPath = path.join(rootPath, '.contextforge', 'rules.md');
+        try {
+            if (fs.existsSync(rulesPath)) {
+                return fs.readFileSync(rulesPath, 'utf8').trim();
+            }
+        } catch { /* silently skip */ }
+        return '';
     }
 }

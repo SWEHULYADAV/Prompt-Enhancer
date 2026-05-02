@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { PromptRefinerPanel, ProviderConfigPanel, SidebarProvider } from './webview';
 import { AgentInstructionSyncService } from './agentSync';
 import { WorkspaceIndexer } from './workspace';
@@ -6,6 +8,7 @@ import { McpServer } from './mcp';
 import { ProviderConfigManager } from './providerConfig';
 import { runPipeline } from './promptPipeline';
 import { mapErrorToUiError, redactSensitiveData } from './utils';
+import { ContextStore } from './contextStore';
 
 // ─── Shared one-click refine logic ───────────────────────────────────────────
 async function runQuickRefine(
@@ -147,7 +150,6 @@ export function activate(context: vscode.ExtensionContext) {
 
         // ── One-click: Save Last Enhanced Prompt ────────────────────────────
         vscode.commands.registerCommand('contextforge.saveLastPrompt', async () => {
-            const { ContextStore } = require('./contextStore');
             const store = new ContextStore();
             const last = store.getLastRefinedPrompt();
             if (!last) {
@@ -166,9 +168,28 @@ export function activate(context: vscode.ExtensionContext) {
         }),
 
         // ── Provider Config ───────────────────────────────────────────────────
-        vscode.commands.registerCommand('contextforge.analyzeWorkspace', () => {
-            vscode.window.showInformationMessage('Analyzing workspace...');
+        vscode.commands.registerCommand('contextforge.configureSearxng', () => {
+            vscode.commands.executeCommand('workbench.action.openSettings', 'contextforge.searxng.baseUrl');
         }),
+
+        vscode.commands.registerCommand('contextforge.editProjectRules', async () => {
+            if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+                vscode.window.showErrorMessage('No workspace open.');
+                return;
+            }
+            const root = vscode.workspace.workspaceFolders[0].uri.fsPath;
+            const dir = path.join(root, '.contextforge');
+            const rulesPath = path.join(dir, 'rules.md');
+
+            if (!fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true }); }
+            if (!fs.existsSync(rulesPath)) {
+                fs.writeFileSync(rulesPath, '# Project Rules\n\n- Always use TypeScript.\n- Keep components functional.\n- Follow standard naming conventions.');
+            }
+            
+            const doc = await vscode.workspace.openTextDocument(rulesPath);
+            await vscode.window.showTextDocument(doc);
+        }),
+
         vscode.commands.registerCommand('contextforge.configureProvider', () => {
             ProviderConfigPanel.createOrShow(context);
         }),
@@ -218,19 +239,18 @@ export function activate(context: vscode.ExtensionContext) {
 
         // ── MCP (placeholder, not implemented yet) ────────────────────────────
         vscode.commands.registerCommand('contextforge.startMcpServer', () => {
-            if (!context.globalState.get('mcpServer')) {
+            if (!mcpServerInstance) {
                 const server = new McpServer();
                 server.start(context);
-                context.globalState.update('mcpServer', server);
+                mcpServerInstance = server;
             } else {
                 vscode.window.showInformationMessage('MCP Server already running.');
             }
         }),
         vscode.commands.registerCommand('contextforge.stopMcpServer', () => {
-            const server: any = context.globalState.get('mcpServer');
-            if (server) {
-                server.stop();
-                context.globalState.update('mcpServer', undefined);
+            if (mcpServerInstance) {
+                mcpServerInstance.stop();
+                mcpServerInstance = undefined;
             }
         })
     ];
@@ -241,4 +261,12 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.executeCommand('setContext', 'contextforge.active', true);
 }
 
-export function deactivate() {}
+let mcpServerInstance: McpServer | undefined;
+
+// Override the MCP commands in activate or add them here
+export function deactivate() {
+    if (mcpServerInstance) {
+        mcpServerInstance.stop();
+        mcpServerInstance = undefined;
+    }
+}

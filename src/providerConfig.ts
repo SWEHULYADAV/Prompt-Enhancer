@@ -58,7 +58,7 @@ export class ProviderConfigManager {
                     displayName: "Gemini Built-in",
                     type: "native",
                     adapterId: "gemini",
-                    model: "gemini-1.5-pro"
+                    model: "gemini-2.0-flash"
                 }
             ]
         };
@@ -78,8 +78,8 @@ export class ProviderConfigManager {
         try {
             const content = fs.readFileSync(configPath, 'utf8');
             return JSON.parse(content) as WorkspaceProviderState;
-        } catch (e) {
-            console.error('Failed to parse providers.json', e);
+        } catch (e: any) {
+            vscode.window.showWarningMessage('ContextForge: Failed to parse providers.json. The file might be corrupted.');
             return undefined;
         }
     }

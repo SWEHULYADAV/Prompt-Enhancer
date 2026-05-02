@@ -29,21 +29,34 @@ export class ContextStore {
     public async saveSummary(summary: string) {
         if (!this.storagePath) {return;}
         this.initFile();
-        const data = JSON.parse(fs.readFileSync(this.getContextFile(), 'utf8'));
-        data.summary = summary;
-        fs.writeFileSync(this.getContextFile(), JSON.stringify(data, null, 2), 'utf8');
+        try {
+            const data = JSON.parse(fs.readFileSync(this.getContextFile(), 'utf8'));
+            data.summary = summary;
+            fs.writeFileSync(this.getContextFile(), JSON.stringify(data, null, 2), 'utf8');
+        } catch (e: any) {
+            vscode.window.showWarningMessage(`ContextForge: Failed to save summary: ${e.message}`);
+        }
     }
 
     public async appendHistory(prompt: string, refined: string) {
         if (!this.storagePath) {return;}
         this.initFile();
-        const data = JSON.parse(fs.readFileSync(this.getContextFile(), 'utf8'));
-        data.history.push({
-            timestamp: new Date().toISOString(),
-            prompt,
-            refined
-        });
-        fs.writeFileSync(this.getContextFile(), JSON.stringify(data, null, 2), 'utf8');
+        try {
+            const data = JSON.parse(fs.readFileSync(this.getContextFile(), 'utf8'));
+            data.history.push({
+                timestamp: new Date().toISOString(),
+                prompt,
+                refined
+            });
+            // Issue #5: Cap history to prevent unbounded growth
+            const MAX_HISTORY = 50;
+            if (data.history.length > MAX_HISTORY) {
+                data.history = data.history.slice(-MAX_HISTORY);
+            }
+            fs.writeFileSync(this.getContextFile(), JSON.stringify(data, null, 2), 'utf8');
+        } catch (e: any) {
+            vscode.window.showWarningMessage(`ContextForge: Failed to save prompt history: ${e.message}`);
+        }
     }
 
     public getLastRefinedPrompt(): string | undefined {
@@ -53,7 +66,8 @@ export class ContextStore {
             if (data.history && data.history.length > 0) {
                 return data.history[data.history.length - 1].refined;
             }
-        } catch (e) {
+        } catch (e: any) {
+            vscode.window.showErrorMessage(`ContextForge: Failed to read context history. The file might be corrupted. Error: ${e.message}`);
             return undefined;
         }
         return undefined;

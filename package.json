@@ -50,6 +50,17 @@
         "title": "ContextForge: Analyze Workspace"
       },
       {
+        "command": "contextforge.configureSearxng",
+        "title": "Configure SearXNG",
+        "category": "ContextForge"
+      },
+      {
+        "command": "contextforge.editProjectRules",
+        "title": "Edit Project Rules",
+        "category": "ContextForge",
+        "icon": "$(edit)"
+      },
+      {
         "command": "contextforge.configureProvider",
         "title": "ContextForge: Configure Provider"
       },
@@ -78,6 +89,20 @@
         "title": "ContextForge: Import Provider Config"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "contextforge.configureSearxng",
+          "when": "view == contextforge-status",
+          "group": "navigation@2"
+        },
+        {
+          "command": "contextforge.editProjectRules",
+          "when": "view == contextforge-status",
+          "group": "navigation@3"
+        }
+      ]
+    },
     "viewsContainers": {
       "activitybar": [
         {
@@ -104,7 +129,10 @@
           "type": "string",
           "enum": [
             "gemini",
-            "groq"
+            "anthropic",
+            "groq",
+            "openai-compatible",
+            "generic-http"
           ],
           "default": "gemini",
           "description": "LLM Provider to use for refining prompts"
@@ -147,6 +175,7 @@
     "@types/vscode": "^1.80.0",
     "@typescript-eslint/eslint-plugin": "^5.59.8",
     "@typescript-eslint/parser": "^5.59.8",
+    "@vscode/vsce": "^2.32.0",
     "chai": "^6.2.2",
     "eslint": "^8.41.0",
     "mocha": "^11.7.5",

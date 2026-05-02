@@ -22,12 +22,16 @@ export interface HealthCheckResult {
     message: string;
 }
 
+export type OnTokenCallback = (chunk: string) => void;
+
 export interface LlmProvider {
     id: string;
     displayName: string;
     isConfigured(context: vscode.ExtensionContext): Promise<boolean>;
     generateJson<T>(request: LlmJsonRequest, schema: JsonSchema, context: vscode.ExtensionContext): Promise<T>;
     generateText(request: LlmTextRequest, context: vscode.ExtensionContext): Promise<string>;
+    /** Optional: streaming version. Falls back to generateText if not implemented. */
+    generateTextStream?(request: LlmTextRequest, context: vscode.ExtensionContext, onToken: OnTokenCallback): Promise<string>;
     healthCheck(context: vscode.ExtensionContext): Promise<HealthCheckResult>;
 }
 
@@ -103,7 +107,7 @@ export interface ContextForgeUiError {
 }
 
 export interface PipelineProgressEvent {
-    step: "checkingProvider" | "checkingSearxng" | "scanningWorkspace" | "planningSearches" | "searchingWeb" | "checkingAmbiguity" | "askingQuestions" | "refiningPrompt" | "savingContext" | "syncingAgents" | "ready";
+    step: "checkingProvider" | "checkingSearxng" | "scanningWorkspace" | "planningSearches" | "searchingWeb" | "checkingAmbiguity" | "askingQuestions" | "refiningPrompt" | "savingContext" | "ready";
     label: string;
     status: "pending" | "running" | "done" | "error";
     message?: string;

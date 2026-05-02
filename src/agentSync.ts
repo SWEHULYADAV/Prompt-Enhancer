@@ -50,19 +50,23 @@ export class AgentInstructionSyncService {
                 continue;
             }
 
-            const dir = path.dirname(fullPath);
-            if (!fs.existsSync(dir)) {
-                fs.mkdirSync(dir, { recursive: true });
-            }
+            try {
+                const dir = path.dirname(fullPath);
+                if (!fs.existsSync(dir)) {
+                    fs.mkdirSync(dir, { recursive: true });
+                }
 
-            // Create Backup if modifying an existing file
-            if (!isNewFile) {
-                const backupPath = `${fullPath}.contextforge.backup`;
-                fs.copyFileSync(fullPath, backupPath);
-            }
+                // Create Backup if modifying an existing file
+                if (!isNewFile) {
+                    const backupPath = `${fullPath}.contextforge.backup`;
+                    fs.copyFileSync(fullPath, backupPath);
+                }
 
-            this.safeUpdateFile(fullPath, isNewFile ? initialContent : template);
-            results.push({ filePaths: [fullPath], action: isNewFile ? 'created' : 'updated' });
+                this.safeUpdateFile(fullPath, isNewFile ? initialContent : template);
+                results.push({ filePaths: [fullPath], action: isNewFile ? 'created' : 'updated' });
+            } catch (e: any) {
+                vscode.window.showWarningMessage(`ContextForge: Could not sync ${relPath} — ${e.message}`);
+            }
         }
         
         if (!dryRun) {
@@ -92,9 +96,13 @@ export class AgentInstructionSyncService {
             const backupPath = `${fullPath}.contextforge.backup`;
 
             if (fs.existsSync(backupPath)) {
-                fs.copyFileSync(backupPath, fullPath);
-                fs.unlinkSync(backupPath);
-                restoredFiles.push(relPath);
+                try {
+                    fs.copyFileSync(backupPath, fullPath);
+                    fs.unlinkSync(backupPath); // Delete backup only after successful copy
+                    restoredFiles.push(relPath);
+                } catch (e: any) {
+                    vscode.window.showWarningMessage(`ContextForge: Rollback failed for ${relPath} — ${e.message}`);
+                }
             }
         }
 

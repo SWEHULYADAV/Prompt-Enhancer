@@ -8,9 +8,15 @@ import { PipelineProgressEvent } from './types';
 export async function runPipeline(
     initialPrompt: string, 
     context: vscode.ExtensionContext,
-    onProgress?: (event: PipelineProgressEvent) => void
+    onProgress?: (event: PipelineProgressEvent) => void,
+    onToken?: (token: string) => void
 ): Promise<string> {
     const provider = await ProviderFactory.getProvider();
+    
+    // Project Rules (Feature 1)
+    const indexer = new WorkspaceIndexer();
+    const projectRules = indexer.getProjectRules();
+    const rulesContext = projectRules ? `\n\n--- Project-Specific Rules ---\n${projectRules}\n` : '';
     
     // Provider check
     const configured = await provider.isConfigured(context);
@@ -21,12 +27,11 @@ export async function runPipeline(
 
     // ── Workspace + Git Context (project-isolated via workspaceFolders[0]) ──────
     onProgress?.({ step: 'scanningWorkspace', label: 'Scanning Workspace', status: 'running' });
-    const indexer = new WorkspaceIndexer();
     const workspaceSummary = await indexer.summarizeWorkspace();
     const gitContext = indexer.getRecentGitContext(); // Empty string if no git / not a repo
     const fullContext = gitContext
-        ? `${workspaceSummary}\n\n--- Recent Git Activity ---\n${gitContext}`
-        : workspaceSummary;
+        ? `${workspaceSummary}\n\n--- Recent Git Activity ---\n${gitContext}${rulesContext}`
+        : `${workspaceSummary}${rulesContext}`;
     onProgress?.({ step: 'scanningWorkspace', label: 'Scanning Workspace', status: 'done' });
     
     // ── SearXNG Web Research ─────────────────────────────────────────────────
@@ -126,6 +131,9 @@ ${fullContext}`;
 You have access to the current workspace context:
 ${fullContext}
 
+Project Rules:
+${projectRules || "None"}
+
 Search Evidence (if any):
 ${searchEvidence}
 ${clarificationAnswers}
@@ -144,10 +152,18 @@ CRITICAL MANDATE (COGNITIVE OVERRIDE & ZERO-REFUSAL):
 
 Refine the following user prompt to be extremely clear, including assumptions, step-by-step logic, and reference to relevant workspace files. Do not answer the prompt, just rewrite it into a better prompt.`;
 
-    const refined = await provider.generateText({
-        prompt: initialPrompt,
-        system: systemPrompt
-    }, context);
+    let refined = "";
+    if (onToken && provider.generateTextStream) {
+        refined = await provider.generateTextStream({
+            prompt: initialPrompt,
+            system: systemPrompt
+        }, context, onToken);
+    } else {
+        refined = await provider.generateText({
+            prompt: initialPrompt,
+            system: systemPrompt
+        }, context);
+    }
     onProgress?.({ step: 'refiningPrompt', label: 'Refining Prompt', status: 'done' });
     
     // ── Save context (workspace-scoped, no cross-project bleed) ─────────────

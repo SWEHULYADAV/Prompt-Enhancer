@@ -1,6 +1,12 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { runPipeline } from './promptPipeline';
 import { getNonce, escapeHtml, mapErrorToUiError, redactSensitiveData } from './utils';
+import { AgentInstructionSyncService } from './agentSync';
+import { WorkspaceIndexer } from './workspace';
+import { ProviderConfigManager } from './providerConfig';
+import { ProviderFactory } from './providers';
 
 export class PromptRefinerPanel {
     public static currentPanel: PromptRefinerPanel | undefined;
@@ -17,11 +23,15 @@ export class PromptRefinerPanel {
                 switch (message.command) {
                     case 'refinePrompt':
                         try {
+                            this.panel.webview.postMessage({ command: 'clearResult' });
                             const refined = await runPipeline(
                                 message.text, 
                                 context,
                                 (progressEvent) => {
                                     this.panel.webview.postMessage({ command: 'progressUpdate', event: progressEvent });
+                                },
+                                (token) => {
+                                    this.panel.webview.postMessage({ command: 'token', data: token });
                                 }
                             );
                             this.panel.webview.postMessage({ command: 'refinementComplete', result: refined });
@@ -37,28 +47,24 @@ export class PromptRefinerPanel {
                     case 'configureSearxng':
                         vscode.commands.executeCommand('workbench.action.openSettings', 'contextforge.searxng.baseUrl');
                         return;
-                    case 'previewSync':
-                        try {
-                            const { AgentInstructionSyncService } = require('./agentSync');
-                            const { WorkspaceIndexer } = require('./workspace');
-                            const indexer = new WorkspaceIndexer();
-                            const summary = await indexer.summarizeWorkspace();
-                            const syncService = new AgentInstructionSyncService();
-                            const results = await syncService.sync(message.text, summary, true); // dryRun = true
-                            this.panel.webview.postMessage({ command: 'syncPreviewResults', results });
+                        case 'previewSync':
+                            try {
+                                const indexer = new WorkspaceIndexer();
+                                const summary = await indexer.summarizeWorkspace();
+                                const syncService = new AgentInstructionSyncService();
+                                const results = await syncService.sync(message.text, summary, true); // dryRun = true
+                                this.panel.webview.postMessage({ command: 'syncPreviewResults', results });
                         } catch (e: any) {
                             vscode.window.showErrorMessage('Error during preview: ' + e.message);
                         }
                         return;
-                    case 'confirmSync':
-                        try {
-                            const { AgentInstructionSyncService } = require('./agentSync');
-                            const { WorkspaceIndexer } = require('./workspace');
-                            const indexer = new WorkspaceIndexer();
-                            const summary = await indexer.summarizeWorkspace();
-                            const syncService = new AgentInstructionSyncService();
-                            await syncService.sync(message.text, summary, false); // dryRun = false
-                            this.panel.webview.postMessage({ command: 'syncComplete' });
+                        case 'confirmSync':
+                            try {
+                                const indexer = new WorkspaceIndexer();
+                                const summary = await indexer.summarizeWorkspace();
+                                const syncService = new AgentInstructionSyncService();
+                                await syncService.sync(message.text, summary, false); // dryRun = false
+                                this.panel.webview.postMessage({ command: 'syncComplete' });
                         } catch (e: any) {
                             vscode.window.showErrorMessage('Error during sync: ' + e.message);
                         }
@@ -120,8 +126,28 @@ export class PromptRefinerPanel {
                     .secondary-btn:hover { background: var(--vscode-button-secondaryHoverBackground); }
                     
                     #result-container { flex: 1; display: none; flex-direction: column; overflow: hidden; margin-top: 10px; }
-                    #result { flex: 1; width: 100%; white-space: pre-wrap; background: var(--vscode-editor-background); border: 1px solid var(--vscode-input-border); padding: 10px; overflow-y: auto; font-family: var(--vscode-editor-font-family); }
-                    
+                    #result {
+                        white-space: pre-wrap;
+                        font-family: var(--vscode-editor-font-family);
+                        line-height: 1.5;
+                        padding: 10px;
+                        background: var(--vscode-editor-background);
+                        border: 1px solid var(--vscode-widget-border);
+                        border-radius: 4px;
+                        overflow-x: auto;
+                        min-height: 50px;
+                    }
+                    .streaming-cursor::after {
+                        content: '|';
+                        animation: blink 1s step-end infinite;
+                        font-weight: bold;
+                        color: var(--vscode-button-background);
+                    }
+                    @keyframes blink {
+                        from, to { opacity: 1; }
+                        50% { opacity: 0; }
+                    }
+                </style>
                     /* Progress UI */
                     #progress-container { display: none; margin-top: 20px; border: 1px solid var(--vscode-widget-border); padding: 15px; border-radius: 4px; background: var(--vscode-editor-background); }
                     .progress-step { display: flex; align-items: center; margin-bottom: 8px; font-size: 13px; }
@@ -189,15 +215,29 @@ export class PromptRefinerPanel {
                             case 'progressUpdate':
                                 updateProgress(message.event);
                                 break;
+                            case 'clearResult':
+                                document.getElementById('result').textContent = '';
+                                document.getElementById('result-container').style.display = 'flex';
+                                document.getElementById('result').classList.add('streaming-cursor');
+                                document.getElementById('copy-btn').style.display = 'none';
+                                break;
+                            case 'token':
+                                const resEl = document.getElementById('result');
+                                resEl.textContent += message.data;
+                                // Auto scroll to bottom
+                                resEl.scrollTop = resEl.scrollHeight;
+                                break;
                             case 'refinementComplete':
                                 document.getElementById('result-container').style.display = 'flex';
                                 document.getElementById('result').textContent = message.result;
+                                document.getElementById('result').classList.remove('streaming-cursor');
                                 document.getElementById('copy-btn').style.display = 'inline-block';
                                 document.getElementById('refine-btn').disabled = false;
                                 document.getElementById('sync-preview-container').style.display = 'none';
                                 document.getElementById('confirm-sync-btn').style.display = 'none';
                                 break;
                             case 'refinementError':
+                                document.getElementById('result').classList.remove('streaming-cursor');
                                 showError(message.error);
                                 document.getElementById('refine-btn').disabled = false;
                                 break;
@@ -359,8 +399,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
                         const keyFiles = ['package.json','tsconfig.json','pyproject.toml','requirements.txt',
                             'Cargo.toml','go.mod','Dockerfile','docker-compose.yml','README.md','.env'];
-                        const fs = require('fs');
-                        const path = require('path');
                         const foundKeys: string[] = [];
                         for (const kf of keyFiles) {
                             if (fs.existsSync(path.join(rootPath, kf))) { foundKeys.push(kf); }
@@ -471,14 +509,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                                 document.getElementById('workspace-status').innerText = '❌ ' + message.error;
                                 document.getElementById('workspace-card').style.display = 'none';
                             } else if (message.data) {
+                                const escapeHtml = (unsafe) => unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
                                 const d = message.data;
                                 document.getElementById('workspace-status').innerText = '';
                                 document.getElementById('ws-name').innerText = d.name;
                                 document.getElementById('ws-files').innerText = d.fileCount;
                                 const kfEl = document.getElementById('ws-keyfiles');
-                                kfEl.innerHTML = d.keyFiles.length ? d.keyFiles.map(f => '<span class="tag">' + f + '</span>').join('') : '<span class="status-text">None found</span>';
+                                kfEl.innerHTML = d.keyFiles.length ? d.keyFiles.map(f => '<span class="tag">' + escapeHtml(f) + '</span>').join('') : '<span class="status-text">None found</span>';
                                 const dirEl = document.getElementById('ws-dirs');
-                                dirEl.innerHTML = d.dirs.length ? d.dirs.map(f => '<span class="tag">' + f + '</span>').join('') : '<span class="status-text">None</span>';
+                                dirEl.innerHTML = d.dirs.length ? d.dirs.map(f => '<span class="tag">' + escapeHtml(f) + '</span>').join('') : '<span class="status-text">None</span>';
                                 document.getElementById('workspace-card').style.display = 'block';
                             }
                         }
@@ -542,7 +581,6 @@ export class ProviderConfigPanel {
     }
 
     private async render() {
-        const { ProviderConfigManager } = require('./providerConfig');
         const state = await ProviderConfigManager.getWorkspaceState();
         let activeConfig = null;
         if (state && state.activeProviderId) {
@@ -553,9 +591,6 @@ export class ProviderConfigPanel {
 
     private async testAndSaveProvider(config: any, apiKey: string) {
         try {
-            const { ProviderConfigManager } = require('./providerConfig');
-            const { ProviderFactory } = require('./providers');
-
             // Temporarily save key to test
             if (apiKey) {
                 await ProviderConfigManager.setApiKey(this.context, config.id, apiKey);
@@ -578,8 +613,6 @@ export class ProviderConfigPanel {
 
     private async saveProvider(config: any, apiKey: string) {
         try {
-            const { ProviderConfigManager } = require('./providerConfig');
-            
             if (apiKey) {
                 await ProviderConfigManager.setApiKey(this.context, config.id, apiKey);
             }
@@ -616,8 +649,8 @@ export class ProviderConfigPanel {
 
     private getHtmlForWebview(webview: vscode.Webview, activeConfig: any) {
         const nonce = getNonce();
-        const initConfig = activeConfig || { type: 'native', adapterId: 'gemini', id: 'default-gemini', displayName: 'Gemini', model: 'gemini-1.5-pro' };
-        const initConfigJson = JSON.stringify(initConfig);
+        const initConfig = activeConfig || { type: 'native', adapterId: 'gemini', id: 'default-gemini', displayName: 'Gemini', model: 'gemini-2.0-flash' };
+        const initConfigJson = JSON.stringify(initConfig).replace(/</g, '\\u003c');
 
         return `<!DOCTYPE html>
             <html lang="en">
@@ -672,7 +705,7 @@ export class ProviderConfigPanel {
                     </div>
                     <div class="form-group">
                         <label>Model</label>
-                        <input type="text" id="nativeModel" value="" placeholder="e.g. gemini-1.5-pro or claude-3-opus-20240229">
+                        <input type="text" id="nativeModel" value="" placeholder="e.g. gemini-2.0-flash or claude-3-5-sonnet-20240620">
                     </div>
                 </div>
 
@@ -863,9 +896,9 @@ export class ProviderConfigPanel {
                     });
 
                     saveAnywayBtn.addEventListener('click', () => {
-                        if (currentConfigToSave) {
-                            vscode.postMessage({ command: 'saveAnyway', config: currentConfigToSave, apiKey: currentApiKeyToSave });
-                        }
+                        if (!currentConfigToSave) return;
+                        if (!confirm("Are you sure you want to save a broken configuration? This may prevent the extension from working properly.")) return;
+                        vscode.postMessage({ command: 'saveAnyway', config: currentConfigToSave, apiKey: currentApiKeyToSave });
                     });
 
                     window.addEventListener('message', event => {
