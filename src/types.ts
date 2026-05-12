@@ -1,3 +1,7 @@
+/**
+ * ContextForge Types
+ * Triggering AutoSync Test...
+ */
 import * as vscode from 'vscode';
 
 export interface JsonSchema {

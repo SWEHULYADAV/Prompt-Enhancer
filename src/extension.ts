@@ -9,6 +9,9 @@ import { ProviderConfigManager } from './providerConfig';
 import { runPipeline } from './promptPipeline';
 import { mapErrorToUiError, redactSensitiveData } from './utils';
 import { ContextStore } from './contextStore';
+import { AutoSyncService } from './autoSync';
+import { registerChatParticipant } from './chatParticipant';
+import { FloatingEnhanceProvider } from './floatingAction';
 
 // ─── Shared one-click refine logic ───────────────────────────────────────────
 async function runQuickRefine(
@@ -66,6 +69,67 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.registerWebviewViewProvider("contextforge.statusView", sidebarProvider)
     );
 
+    // ── Strategy 1: Auto File Watcher ────────────────────────────────────────
+    // Workspace changes par silently CLAUDE.md / AGENTS.md / .cursor/rules/ update karo
+    const autoSyncService = new AutoSyncService(context);
+    autoSyncService.start();
+    context.subscriptions.push({ dispose: () => autoSyncService.dispose() });
+
+    // ── Strategy 2: @contextforge Chat Participant ───────────────────────────
+    // VS Code native chat mein @contextforge participant register karo
+    const chatParticipantDisposable = registerChatParticipant(context);
+    context.subscriptions.push(chatParticipantDisposable);
+
+    // ── Strategy 3: Floating Wand Button (CodeLens) ────────────────────────
+    // Text select hone par ✨ Enhance button dikhao
+    const floatingProvider = new FloatingEnhanceProvider();
+    context.subscriptions.push(
+        vscode.languages.registerCodeLensProvider({ pattern: '**/*' }, floatingProvider)
+    );
+    // Selection change hone par provider ko update karo
+    context.subscriptions.push(
+        vscode.window.onDidChangeTextEditorSelection((e) => {
+            const sel = e.selections[0];
+            floatingProvider.updateSelection(
+                e.textEditor,
+                sel && !sel.isEmpty ? sel : undefined
+            );
+        })
+    );
+    // enhanceSelection command: selection ko in-place enhance karo
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'contextforge.enhanceSelection',
+            async (selectedText?: string, selection?: vscode.Selection) => {
+                const editor = vscode.window.activeTextEditor;
+                if (!editor) { return; }
+
+                // Agar command palette se call hua (no args) toh active selection lo
+                const textToEnhance = selectedText ?? editor.document.getText(editor.selection);
+                const targetSelection = selection ?? editor.selection;
+
+                if (!textToEnhance.trim()) {
+                    vscode.window.showWarningMessage('ContextForge: No text selected to enhance.');
+                    return;
+                }
+
+                await runQuickRefine(textToEnhance, context, async (refined) => {
+                    // In-place replace karo (RooCode style)
+                    await editor.edit(eb => eb.replace(targetSelection, refined));
+                    vscode.window.showInformationMessage(
+                        '✨ ContextForge: Prompt enhanced in-place!',
+                        'Undo'
+                    ).then(action => {
+                        if (action === 'Undo') {
+                            vscode.commands.executeCommand('undo');
+                        }
+                    });
+                });
+            }
+        )
+    );
+
+    // ── Existing one-click commands ──────────────────────────────────────────
     const commands = [
         // ── Panel ────────────────────────────────────────────────────────────
         vscode.commands.registerCommand('contextforge.openPromptRefiner', () => {

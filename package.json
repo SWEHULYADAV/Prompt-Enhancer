@@ -13,7 +13,7 @@
   },
   "homepage": "https://github.com/contextforge-team/contextforge#readme",
   "engines": {
-    "vscode": "^1.80.0"
+    "vscode": "^1.90.0"
   },
   "categories": [
     "Other",
@@ -87,6 +87,18 @@
       {
         "command": "contextforge.importProviderConfig",
         "title": "ContextForge: Import Provider Config"
+      },
+      {
+        "command": "contextforge.enhanceSelection",
+        "title": "ContextForge: ✨ Enhance Selected Text In-Place"
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "contextforge.enhance",
+        "name": "contextforge",
+        "description": "Enhance your rough prompt with workspace context, web search, and AI refinement",
+        "isSticky": false
       }
     ],
     "menus": {
@@ -156,6 +168,23 @@
           "type": "string",
           "default": "http://localhost:8080",
           "description": "Base URL for SearXNG instance"
+        },
+        "contextforge.autoSync.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically sync workspace context to agent files (CLAUDE.md, AGENTS.md, .cursor/rules/) on file save"
+        },
+        "contextforge.autoSync.delaySeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 5,
+          "maximum": 300,
+          "description": "How many seconds to wait after a file save before syncing (debounce delay)"
+        },
+        "contextforge.floatingButton.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show ✨ Enhance with ContextForge button above selected text in editors"
         }
       }
     }

@@ -76,6 +76,58 @@ export class AgentInstructionSyncService {
         return results;
     }
 
+    /**
+     * syncQuiet — AutoSyncService ke liye.
+     * sync() ki tarah hi kaam karta hai lekin koi success notification
+     * nahi dikhata. Background mein silently context update karta hai.
+     */
+    public async syncQuiet(refinedPrompt: string, summary: string): Promise<AgentSyncResult[]> {
+        if (!this.rootPath) { return []; }
+
+        const files = [
+            'AGENTS.md',
+            'CLAUDE.md',
+            'GEMINI.md',
+            '.github/copilot-instructions.md',
+            '.cursor/rules/contextforge.mdc',
+            '.continue/rules/contextforge.md',
+            '.agents/rules/contextforge.md'
+        ];
+
+        const template = this.buildTemplate(refinedPrompt, summary);
+        const results: AgentSyncResult[] = [];
+
+        for (const relPath of files) {
+            const fullPath = path.join(this.rootPath, relPath);
+            const isNewFile = !fs.existsSync(fullPath);
+
+            let initialContent = template;
+            if (isNewFile && relPath.endsWith('.mdc')) {
+                initialContent = `---\ndescription: ContextForge Generated Rules\nglobs: ["**/*"]\nalwaysApply: true\n---\n\n` + template;
+            }
+
+            try {
+                const dir = path.dirname(fullPath);
+                if (!fs.existsSync(dir)) {
+                    fs.mkdirSync(dir, { recursive: true });
+                }
+
+                if (!isNewFile) {
+                    const backupPath = `${fullPath}.contextforge.backup`;
+                    fs.copyFileSync(fullPath, backupPath);
+                }
+
+                this.safeUpdateFile(fullPath, isNewFile ? initialContent : template);
+                results.push({ filePaths: [fullPath], action: isNewFile ? 'created' : 'updated' });
+            } catch (e: any) {
+                // Quiet mode mein sirf console log karo, popup nahi
+                console.warn(`ContextForge AutoSync: Could not sync ${relPath} — ${e.message}`);
+            }
+        }
+
+        return results;
+    }
+
     public rollback(): string[] {
         if (!this.rootPath) {return [];}
 
